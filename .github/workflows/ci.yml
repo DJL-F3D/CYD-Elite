@@ -17,6 +17,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build firmware
-        uses: esphome/build-action@v8
+        uses: esphome/build-action@v8.1.0
         with:
           yaml-file: cyd-elite-${{ matrix.variant }}.yaml
