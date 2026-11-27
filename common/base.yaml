@@ -318,6 +318,17 @@ select:
     on_value:
       - lambda: id(elite).set_theme_by_name(x);
   - platform: template
+    id: change_effect
+    name: Ship Change Effect
+    icon: mdi:star-four-points
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    options: ["None", "Hyperspace", "Explosion", "Explosion + Hyperspace"]
+    initial_option: "Explosion + Hyperspace"
+    on_value:
+      - lambda: id(elite).set_effect_by_name(x);
+  - platform: template
     id: font_select
     name: Font
     icon: mdi:format-font
@@ -461,6 +472,17 @@ switch:
     turn_off_action:
       - lambda: id(elite).set_show_date(false);
   - platform: template
+    id: hourly_explosion
+    name: Hourly Explosion
+    icon: mdi:firework
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    turn_on_action:
+      - lambda: id(elite).set_hourly_explosion(true);
+    turn_off_action:
+      - lambda: id(elite).set_hourly_explosion(false);
+  - platform: template
     id: auto_brightness
     name: Auto Brightness
     icon: mdi:brightness-auto
@@ -484,6 +506,11 @@ button:
     icon: mdi:dice-multiple
     on_press:
       - lambda: id(elite).random_ship();
+  - platform: template
+    name: Explode Ship
+    icon: mdi:firework
+    on_press:
+      - lambda: id(elite).explode();
   - platform: restart
     name: Restart
     entity_category: config

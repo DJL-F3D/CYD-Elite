@@ -24,6 +24,10 @@ static const int SHIP_CY = 90;
 static const float FOCAL = 256.0f;              // perspective focal length (pixels)
 static const float SHIP_SCREEN_RADIUS = 60.0f;  // resting projected radius of a ship
 static const float FLY_IN_SECONDS = 1.6f;
+static const uint32_t EXPLODE_MS = 1500;
+static const uint32_t HYPERSPACE_MS = 1300;
+
+static const char *const EFFECT_NAMES[] = {"None", "Hyperspace", "Explosion", "Explosion + Hyperspace"};
 
 // ---------------------------------------------------------------------------
 // Colour themes. Order must match the "Colour Theme" select in the YAML.
@@ -119,10 +123,20 @@ void EliteClock::dump_config() {
 void EliteClock::loop() {
   // Automatic ship cycling
   if (this->auto_cycle_ && this->cycle_ms_ > 0 && millis() - this->last_change_ >= this->cycle_ms_) {
-    if (this->cycle_random_)
-      this->random_ship();
-    else
-      this->next_ship();
+    this->change_ship_(this->next_index_());
+  }
+  // On the hour: blow up the current ship and jump to the next
+  ESPTime now;
+  if (this->get_time_(now)) {
+    if (this->last_hour_ < 0) {
+      this->last_hour_ = now.hour;  // first valid time after boot: don't fire
+    } else if (now.hour != this->last_hour_ && now.minute == 0) {
+      this->last_hour_ = now.hour;
+      if (this->hourly_) {
+        ESP_LOGI(TAG, "On the hour: explosion!");
+        this->change_ship_(this->next_index_(), true);
+      }
+    }
   }
   // Long press on the touchscreen toggles the ship info line
   if (this->touching_ && !this->long_fired_ && millis() - this->touch_t0_ > 900) {
@@ -149,6 +163,7 @@ void EliteClock::set_ship(int index, bool animate) {
   mat_rotate(this->m_, 0, -0.35f);
   this->fly_t_ = animate ? 0.0f : 1.0f;
   this->fly_start_ = millis();
+  this->dist_ = this->target_dist_ * (animate ? 15.0f : 1.0f);  // avoid a one-frame flash at full size
   ESP_LOGD(TAG, "Ship: %s", SHIPS[index].name);
 }
 
@@ -156,21 +171,219 @@ bool EliteClock::set_ship_by_name(const std::string &name) {
   for (int i = 0; i < NUM_SHIPS; i++) {
     if (name == SHIPS[i].name) {
       if (i != this->ship_)
-        this->set_ship(i);
+        this->change_ship_(i);
       return true;
     }
   }
   return false;
 }
 
-void EliteClock::next_ship() { this->set_ship(this->ship_ + 1); }
-void EliteClock::prev_ship() { this->set_ship(this->ship_ - 1); }
+void EliteClock::next_ship() { this->change_ship_(this->ship_ + 1); }
+void EliteClock::prev_ship() { this->change_ship_(this->ship_ - 1); }
 void EliteClock::random_ship() {
   int n = this->ship_;
   if (NUM_SHIPS > 1)
     while (n == this->ship_)
       n = random_uint32() % NUM_SHIPS;
-  this->set_ship(n);
+  this->change_ship_(n);
+}
+void EliteClock::explode() { this->change_ship_(this->next_index_(), true); }
+
+int EliteClock::next_index_() const {
+  if (!this->cycle_random_ || NUM_SHIPS < 2)
+    return (this->ship_ + 1) % NUM_SHIPS;
+  int n = this->ship_;
+  while (n == this->ship_)
+    n = random_uint32() % NUM_SHIPS;
+  return n;
+}
+
+bool EliteClock::set_effect_by_name(const std::string &name) {
+  for (int i = 0; i < 4; i++) {
+    if (name == EFFECT_NAMES[i]) {
+      this->effect_ = i;
+      return true;
+    }
+  }
+  return false;
+}
+
+// Route every ship change through the explosion / hyperspace sequence
+void EliteClock::change_ship_(int index, bool force_explode) {
+  if (index < 0)
+    index = NUM_SHIPS - 1;
+  if (index >= NUM_SHIPS)
+    index = 0;
+  this->last_change_ = millis();
+  if (this->phase_ != PHASE_SHOW) {
+    this->pending_ = index;  // already mid-effect: just retarget
+    return;
+  }
+  uint8_t eff = force_explode ? EFFECT_BOTH : this->effect_;
+  this->pending_ = index;
+  this->pending_hyper_ = eff & EFFECT_HYPERSPACE;
+  this->phase_start_ = millis();
+  if (eff & EFFECT_EXPLOSION) {
+    this->start_explosion_();
+    this->phase_ = PHASE_EXPLODE;
+  } else if (eff & EFFECT_HYPERSPACE) {
+    this->phase_ = PHASE_HYPERSPACE;
+  } else {
+    this->set_ship(index);
+  }
+}
+
+void EliteClock::update_phase_() {
+  uint32_t el = millis() - this->phase_start_;
+  if (this->phase_ == PHASE_EXPLODE && el >= EXPLODE_MS) {
+    if (this->pending_hyper_) {
+      this->phase_ = PHASE_HYPERSPACE;
+      this->phase_start_ = millis();
+    } else {
+      this->phase_ = PHASE_SHOW;
+      this->set_ship(this->pending_);
+    }
+  } else if (this->phase_ == PHASE_HYPERSPACE && el >= HYPERSPACE_MS) {
+    this->phase_ = PHASE_SHOW;
+    this->set_ship(this->pending_);
+  }
+}
+
+static float frand_s() { return (float) (random_uint32() & 0xFFFF) / 32767.5f - 1.0f; }
+
+// Break the ship into flying edges plus a particle cloud (camera space)
+void EliteClock::start_explosion_() {
+  const ShipBlueprint &s = SHIPS[this->ship_];
+  static float cv[64][3];
+  for (int i = 0; i < s.num_verts && i < 64; i++) {
+    mat_apply(this->m_, s.verts[i].x, s.verts[i].y, s.verts[i].z, cv[i]);
+    cv[i][2] += this->dist_;
+  }
+  const float r = s.radius;
+  this->boom_cz_ = this->dist_;
+  this->boom_r_ = r;
+  this->num_debris_ = 0;
+  for (int i = 0; i < s.num_edges && this->num_debris_ < MAX_DEBRIS; i++) {
+    const ShipEdge &e = s.edges[i];
+    if (e.v1 >= 64 || e.v2 >= 64)
+      continue;
+    Debris &d = this->debris_[this->num_debris_++];
+    d.mx = (cv[e.v1][0] + cv[e.v2][0]) * 0.5f;
+    d.my = (cv[e.v1][1] + cv[e.v2][1]) * 0.5f;
+    d.mz = (cv[e.v1][2] + cv[e.v2][2]) * 0.5f;
+    d.ax = cv[e.v1][0] - d.mx;
+    d.ay = cv[e.v1][1] - d.my;
+    d.az = cv[e.v1][2] - d.mz;
+    // fly outwards from the ship's centre, with some randomness
+    float ox = d.mx, oy = d.my, oz = d.mz - this->dist_;
+    float l = sqrtf(ox * ox + oy * oy + oz * oz) + 1.0f;
+    float sp = r * (0.35f + frand() * 0.9f);
+    d.vx = ox / l * sp + frand_s() * r * 0.25f;
+    d.vy = oy / l * sp + frand_s() * r * 0.25f;
+    d.vz = oz / l * sp + frand_s() * r * 0.25f;
+    // random spin axis
+    d.kx = frand_s();
+    d.ky = frand_s();
+    d.kz = frand_s();
+    float kl = sqrtf(d.kx * d.kx + d.ky * d.ky + d.kz * d.kz) + 1e-3f;
+    d.kx /= kl;
+    d.ky /= kl;
+    d.kz /= kl;
+    d.spin = 3.0f + frand() * 9.0f;
+  }
+  for (auto &p : this->particles_) {
+    float x = frand_s(), y = frand_s(), z = frand_s();
+    float l = sqrtf(x * x + y * y + z * z) + 1e-3f;
+    float sp = r * (0.2f + frand() * 1.2f);
+    p.vx = x / l * sp;
+    p.vy = y / l * sp;
+    p.vz = z / l * sp;
+    p.c = random_uint32() % 3;
+  }
+}
+
+void EliteClock::draw_explosion_(display::Display &it) {
+  const Theme &th = THEMES[this->theme_];
+  float t = (millis() - this->phase_start_) / (float) EXPLODE_MS;  // 0..1
+  float ts = t * EXPLODE_MS / 1000.0f;                              // seconds
+  it.start_clipping(display::Rect(VIEW_X, VIEW_Y, VIEW_W, VIEW_H));
+
+  // flash + shockwave ring
+  int cx = SHIP_CX, cy = SHIP_CY;
+  if (t < 0.06f) {
+    int fr = (int) (this->boom_r_ * FOCAL / this->boom_cz_ * (0.3f + t * 10.0f));
+    it.filled_circle(cx, cy, fr, Color(255, 255, 255));
+  }
+  if (t < 0.5f)
+    it.circle(cx, cy, (int) (8 + t * 2.0f * 190.0f), th.accent);
+
+  // tumbling debris: each edge spins about a random axis as it flies outward
+  for (int i = 0; i < this->num_debris_; i++) {
+    // fade out by dropping pieces as the explosion ages
+    if (t > 0.45f && ((i * 37) % 100) < (t - 0.45f) * 180.0f)
+      continue;
+    const Debris &d = this->debris_[i];
+    float ang = d.spin * ts, c = cosf(ang), s = sinf(ang);
+    // Rodrigues rotation of the half-edge vector a about k
+    float kd = d.kx * d.ax + d.ky * d.ay + d.kz * d.az;
+    float cx_ = d.ky * d.az - d.kz * d.ay, cy_ = d.kz * d.ax - d.kx * d.az, cz_ = d.kx * d.ay - d.ky * d.ax;
+    float rx = d.ax * c + cx_ * s + d.kx * kd * (1 - c);
+    float ry = d.ay * c + cy_ * s + d.ky * kd * (1 - c);
+    float rz = d.az * c + cz_ * s + d.kz * kd * (1 - c);
+    float mx = d.mx + d.vx * ts, my = d.my + d.vy * ts, mz = d.mz + d.vz * ts;
+    float z1 = mz + rz, z2 = mz - rz;
+    if (z1 < 1.0f || z2 < 1.0f)
+      continue;
+    int x1 = SHIP_CX + (int) ((mx + rx) * FOCAL / z1), y1 = SHIP_CY - (int) ((my + ry) * FOCAL / z1);
+    int x2 = SHIP_CX + (int) ((mx - rx) * FOCAL / z2), y2 = SHIP_CY - (int) ((my - ry) * FOCAL / z2);
+    it.line(x1, y1, x2, y2, th.ship);
+  }
+
+  // particle cloud, flickering between colours
+  for (int i = 0; i < NUM_PARTICLES; i++) {
+    if (t > 0.6f && (i % 10) < (t - 0.6f) * 25.0f)
+      continue;
+    const Particle &p = this->particles_[i];
+    float z = this->boom_cz_ + p.vz * ts;
+    if (z < 1.0f)
+      continue;
+    int x = SHIP_CX + (int) (p.vx * ts * FOCAL / z), y = SHIP_CY - (int) (p.vy * ts * FOCAL / z);
+    uint8_t ci = (p.c + (millis() / 80)) % 3;
+    Color col = ci == 0 ? th.ship : (ci == 1 ? th.accent : Color(255, 255, 255));
+    if (t < 0.35f)
+      it.filled_rectangle(x, y, 2, 2, col);
+    else
+      it.draw_pixel_at(x, y, col);
+  }
+  it.end_clipping();
+}
+
+// Elite-style hyperspace: concentric rings rushing out from the centre
+void EliteClock::draw_hyperspace_(display::Display &it) {
+  const Theme &th = THEMES[this->theme_];
+  float t = (millis() - this->phase_start_) / (float) HYPERSPACE_MS;  // 0..1
+  it.start_clipping(display::Rect(VIEW_X, VIEW_Y, VIEW_W, VIEW_H));
+  const int rings = 9;
+  for (int i = 0; i < rings; i++) {
+    float f = fmodf(t * 2.2f + (float) i / rings, 1.0f);
+    int r = (int) (4.0f + f * f * 210.0f);
+    it.circle(SHIP_CX, SHIP_CY, r, (i % 2) ? th.ship : th.accent);
+  }
+  it.end_clipping();
+}
+
+bool EliteClock::get_time_(ESPTime &t) {
+  if (this->time_ != nullptr) {
+    t = this->time_->now();
+    if (t.is_valid())
+      return true;
+  }
+  if (this->fallback_time_ != nullptr) {
+    t = this->fallback_time_->now();
+    if (t.is_valid())
+      return true;
+  }
+  return false;
 }
 
 bool EliteClock::set_theme_by_name(const std::string &name) {
@@ -238,10 +451,11 @@ void EliteClock::update_motion_(float dt) {
   this->dist_ = this->target_dist_ * (1.0f + 14.0f * ease);
 }
 
-void EliteClock::draw_stars_(display::Display &it, float dt) {
+void EliteClock::draw_stars_(display::Display &it, float dt, float boost) {
   const Theme &th = THEMES[this->theme_];
-  const float speed = 0.06f * dt;  // gentle forward drift
+  const float speed = 0.06f * dt * boost;  // gentle forward drift (fast in hyperspace)
   for (auto &s : this->stars_) {
+    float oz = s.z;
     s.z -= speed;
     int sx = SHIP_CX + (int) (s.x / s.z * 60.0f);
     int sy = SHIP_CY + (int) (s.y / s.z * 60.0f);
@@ -251,7 +465,13 @@ void EliteClock::draw_stars_(display::Display &it, float dt) {
       s.z = 0.6f + frand() * 0.4f;
       continue;
     }
-    if (s.z < 0.25f)
+    if (boost > 2.0f) {
+      // streak from where the star was last frame
+      int ox = SHIP_CX + (int) (s.x / oz * 60.0f), oy = SHIP_CY + (int) (s.y / oz * 60.0f);
+      it.start_clipping(display::Rect(VIEW_X, VIEW_Y, VIEW_W, VIEW_H));
+      it.line(ox, oy, sx, sy, th.stars);
+      it.end_clipping();
+    } else if (s.z < 0.25f)
       it.filled_rectangle(sx, sy, 2, 2, th.stars);
     else
       it.draw_pixel_at(sx, sy, th.stars);
@@ -386,9 +606,15 @@ void EliteClock::draw(display::Display &it) {
   this->update_motion_(dt);
 
   // ---- space view ----
+  this->update_phase_();
   if (this->starfield_)
-    this->draw_stars_(it, dt);
-  this->draw_ship_(it);
+    this->draw_stars_(it, dt, this->phase_ == PHASE_HYPERSPACE ? 30.0f : 1.0f);
+  if (this->phase_ == PHASE_EXPLODE)
+    this->draw_explosion_(it);
+  else if (this->phase_ == PHASE_HYPERSPACE)
+    this->draw_hyperspace_(it);
+  else
+    this->draw_ship_(it);
 
   // header: Commander name, or the classic title if blank
   char buf[48];
@@ -400,7 +626,10 @@ void EliteClock::draw(display::Display &it) {
   this->draw_text_centered_(it, SCREEN_W / 2, 5, buf, 1, th.text);
 
   // ship name at the bottom of the space view
-  this->draw_text_centered_(it, SCREEN_W / 2, DIVIDER_Y - 13, SHIPS[this->ship_].name, 1, th.accent);
+  if (this->phase_ == PHASE_HYPERSPACE)
+    this->draw_text_centered_(it, SCREEN_W / 2, DIVIDER_Y - 13, "Hyperspace", 1, th.accent);
+  else if (this->phase_ == PHASE_SHOW)
+    this->draw_text_centered_(it, SCREEN_W / 2, DIVIDER_Y - 13, SHIPS[this->ship_].name, 1, th.accent);
 
   // flashing in-flight message
   if (!this->message_.empty()) {
@@ -417,15 +646,7 @@ void EliteClock::draw(display::Display &it) {
 
   // ---- clock ----
   ESPTime t;
-  bool valid = false;
-  if (this->time_ != nullptr) {
-    t = this->time_->now();
-    valid = t.is_valid();
-  }
-  if (!valid && this->fallback_time_ != nullptr) {
-    t = this->fallback_time_->now();
-    valid = t.is_valid();
-  }
+  bool valid = this->get_time_(t);
   const int scale = 5;  // 40 px tall digits
   const int clock_y = DIVIDER_Y + 6;
   if (valid) {
@@ -492,6 +713,8 @@ void EliteClock::touch_end() {
     this->message_.clear();
     return;
   }
+  if (this->phase_ != PHASE_SHOW)
+    return;  // let the effect finish
   int dx = this->touch_x_ - this->touch_x0_;
   int dy = this->touch_y_ - this->touch_y0_;
   if (dx > 50 && abs(dx) > abs(dy)) {

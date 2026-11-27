@@ -16,6 +16,9 @@ It runs ESPHome, so Home Assistant finds it automatically and every setting (inc
   boulder, splinter and the Elite logo.
 - Elite-style **hidden-line removal** (back-face culling with the original face normals). You can turn it off for a full wireframe.
 - Ships **fly in** from the distance like the title screen, then tumble over a drifting starfield.
+- **Explosions and hyperspace:** when the ship changes, it can blow apart (tumbling debris, particle cloud,
+  shockwave) and/or jump through Elite-style hyperspace rings. **On the hour**, the current ship always explodes
+  and you hyperspace to the next one.
 - Big clock using the **original BBC Micro font**, or the "space-age" font from the Executive edition.
 - Header shows **Commander &lt;your name&gt;**, set from Home Assistant.
 - Bottom line shows the date, and cycles through the ship's stats from the blueprint: bounty, speed, energy, and laser/missiles.
@@ -25,6 +28,8 @@ It runs ESPHome, so Home Assistant finds it automatically and every setting (inc
 - Auto-cycling ships (sequential or random), auto-brightness from the on-board light sensor, and the RGB LED exposed as a light.
 - Time and time zone come from Home Assistant, with SNTP as a fallback.
 - One-click **web installer** and **automatic firmware updates** from GitHub Pages, the same approach as [espcontrol](https://github.com/jtenniswood/espcontrol).
+
+![Explosion and hyperspace](docs/images/explosion.gif)
 
 ![Themes](docs/images/themes.png)
 
@@ -75,6 +80,9 @@ You can override any substitution from the variant file there, such as touch cal
 | Commander Name | text | Shown at the top of the screen ("Commander Jameson"). Leave it blank for `---- E L I T E ----`. |
 | Ship | select | Shows the current ship; choose one to display it. |
 | Next / Previous / Random Ship | button | |
+| Explode Ship | button | Blow up the current ship and hyperspace to the next. |
+| Ship Change Effect | select | None / Hyperspace / Explosion / Explosion + Hyperspace |
+| Hourly Explosion | switch | Explode and jump to a new ship on the hour. |
 | Auto Cycle Ships | switch | Change ship automatically. |
 | Cycle Interval | number (min) | How often to change ship. |
 | Cycle Order | select | Sequential or Random. |

@@ -21,6 +21,9 @@ struct Theme {
   Color stars;   // starfield
 };
 
+enum EffectMode : uint8_t { EFFECT_NONE = 0, EFFECT_HYPERSPACE = 1, EFFECT_EXPLOSION = 2, EFFECT_BOTH = 3 };
+enum Phase : uint8_t { PHASE_SHOW, PHASE_EXPLODE, PHASE_HYPERSPACE };
+
 class EliteClock : public Component {
  public:
   void setup() override;
@@ -40,8 +43,11 @@ class EliteClock : public Component {
   void next_ship();
   void prev_ship();
   void random_ship();
+  void explode();  // blow up the current ship, then hyperspace to the next
+  bool set_effect_by_name(const std::string &name);
+  void set_hourly_explosion(bool v) { this->hourly_ = v; }
   int ship_index() const { return this->ship_; }
-  std::string ship_name() const { return SHIPS[this->ship_].name; }
+  std::string ship_name() const { return SHIPS[this->phase_ == PHASE_SHOW ? this->ship_ : this->pending_].name; }
   static int ship_count() { return NUM_SHIPS; }
 
   // ---- settings (normally driven from Home Assistant entities) ----
@@ -67,8 +73,15 @@ class EliteClock : public Component {
 
  protected:
   void prepare_ship_();
+  int next_index_() const;
+  void change_ship_(int index, bool force_explode = false);
+  void start_explosion_();
+  void update_phase_();
+  void draw_explosion_(display::Display &it);
+  void draw_hyperspace_(display::Display &it);
+  bool get_time_(ESPTime &t);
   void update_motion_(float dt);
-  void draw_stars_(display::Display &it, float dt);
+  void draw_stars_(display::Display &it, float dt, float boost = 1.0f);
   void draw_ship_(display::Display &it);
   void draw_text_(display::Display &it, int x, int y, const char *s, int scale, Color c);
   void draw_text_centered_(display::Display &it, int cx, int y, const char *s, int scale, Color c);
@@ -109,6 +122,24 @@ class EliteClock : public Component {
   bool show_info_{true};
   bool exec_font_{false};
   bool show_date_{true};
+
+  // effects
+  uint8_t effect_{EFFECT_BOTH};
+  bool hourly_{true};
+  int last_hour_{-1};
+  Phase phase_{PHASE_SHOW};
+  uint32_t phase_start_{0};
+  int pending_{0};
+  bool pending_hyper_{false};
+  struct Debris { float mx, my, mz, ax, ay, az, vx, vy, vz, kx, ky, kz, spin; };
+  static const int MAX_DEBRIS = 48;
+  Debris debris_[MAX_DEBRIS];
+  int num_debris_{0};
+  struct Particle { float vx, vy, vz; uint8_t c; };
+  static const int NUM_PARTICLES = 72;
+  Particle particles_[NUM_PARTICLES];
+  float boom_cz_{0};
+  float boom_r_{0};
 
   std::string message_;
   uint32_t message_until_{0};
