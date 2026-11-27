@@ -26,7 +26,7 @@ jobs:
       matrix:
         variant: [st7789, ili9342, ili9341]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Build firmware
         id: esphome-build
         uses: esphome/build-action@v8.1.0
@@ -37,7 +37,7 @@ jobs:
         run: |
           mkdir -p output/firmware
           mv "${{ steps.esphome-build.outputs.name }}" output/firmware/${{ matrix.variant }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: firmware-${{ matrix.variant }}
           path: output
@@ -50,8 +50,8 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v8
         with:
           pattern: firmware-*
           merge-multiple: true
@@ -60,8 +60,8 @@ jobs:
         run: |
           cp -r static/* site/
           mkdir -p site/images && cp docs/images/*.png site/images/
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: site
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
