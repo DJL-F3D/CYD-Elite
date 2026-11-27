@@ -16,7 +16,8 @@ It runs ESPHome, so Home Assistant finds it automatically and every setting (inc
   boulder, splinter and the Elite logo.
 - Elite-style **hidden-line removal** (back-face culling with the original face normals). You can turn it off for a full wireframe.
 - Ships **fly in** from the distance like the title screen, then tumble over a drifting starfield.
-- **Explosions and hyperspace:** when the ship changes, it can blow apart (tumbling debris, particle cloud,
+- **Lasers, explosions and hyperspace:** when the ship changes, it can be shot down with flickering
+  Elite-style lasers from the bottom corners of the screen, blow apart (tumbling debris, particle cloud,
   shockwave) and/or jump through Elite-style hyperspace rings. **On the hour**, the current ship always explodes
   and you hyperspace to the next one.
 - Big clock using the **original BBC Micro font**, or the "space-age" font from the Executive edition.
@@ -29,7 +30,7 @@ It runs ESPHome, so Home Assistant finds it automatically and every setting (inc
 - Time and time zone come from Home Assistant, with SNTP as a fallback.
 - One-click **web installer** and **automatic firmware updates** from GitHub Pages, the same approach as [espcontrol](https://github.com/jtenniswood/espcontrol).
 
-![Explosion and hyperspace](docs/images/explosion.gif)
+![Lasers](docs/images/lasers.png) ![Explosion and hyperspace](docs/images/explosion.gif)
 
 ![Themes](docs/images/themes.png)
 
@@ -83,6 +84,7 @@ You can override any substitution from the variant file there, such as touch cal
 | Explode Ship | button | Blow up the current ship and hyperspace to the next. |
 | Ship Change Effect | select | None / Hyperspace / Explosion / Explosion + Hyperspace |
 | Hourly Explosion | switch | Explode and jump to a new ship on the hour. |
+| Fire Lasers | switch | Shoot the ship with lasers before every explosion. |
 | Auto Cycle Ships | switch | Change ship automatically. |
 | Cycle Interval | number (min) | How often to change ship. |
 | Cycle Order | select | Sequential or Random. |

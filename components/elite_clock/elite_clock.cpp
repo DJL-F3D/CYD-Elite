@@ -24,6 +24,7 @@ static const int SHIP_CY = 90;
 static const float FOCAL = 256.0f;              // perspective focal length (pixels)
 static const float SHIP_SCREEN_RADIUS = 60.0f;  // resting projected radius of a ship
 static const float FLY_IN_SECONDS = 1.6f;
+static const uint32_t LASER_MS = 750;
 static const uint32_t EXPLODE_MS = 1500;
 static const uint32_t HYPERSPACE_MS = 1300;
 
@@ -223,7 +224,9 @@ void EliteClock::change_ship_(int index, bool force_explode) {
   this->pending_ = index;
   this->pending_hyper_ = eff & EFFECT_HYPERSPACE;
   this->phase_start_ = millis();
-  if (eff & EFFECT_EXPLOSION) {
+  if ((eff & EFFECT_EXPLOSION) && this->lasers_) {
+    this->phase_ = PHASE_LASER;  // shoot it first
+  } else if (eff & EFFECT_EXPLOSION) {
     this->start_explosion_();
     this->phase_ = PHASE_EXPLODE;
   } else if (eff & EFFECT_HYPERSPACE) {
@@ -235,7 +238,11 @@ void EliteClock::change_ship_(int index, bool force_explode) {
 
 void EliteClock::update_phase_() {
   uint32_t el = millis() - this->phase_start_;
-  if (this->phase_ == PHASE_EXPLODE && el >= EXPLODE_MS) {
+  if (this->phase_ == PHASE_LASER && el >= LASER_MS) {
+    this->start_explosion_();
+    this->phase_ = PHASE_EXPLODE;
+    this->phase_start_ = millis();
+  } else if (this->phase_ == PHASE_EXPLODE && el >= EXPLODE_MS) {
     if (this->pending_hyper_) {
       this->phase_ = PHASE_HYPERSPACE;
       this->phase_start_ = millis();
@@ -370,6 +377,36 @@ void EliteClock::draw_hyperspace_(display::Display &it) {
     it.circle(SHIP_CX, SHIP_CY, r, (i % 2) ? th.ship : th.accent);
   }
   it.end_clipping();
+}
+
+// Elite-style laser fire: sights in the middle, flickering beams from the
+// bottom corners of the space view converging on the target
+void EliteClock::draw_lasers_(display::Display &it) {
+  const Theme &th = THEMES[this->theme_];
+  const int cx = SHIP_CX, cy = SHIP_CY;
+  // sights
+  it.horizontal_line(cx - 26, cy, 16, th.text);
+  it.horizontal_line(cx + 11, cy, 16, th.text);
+  it.vertical_line(cx, cy - 22, 14, th.text);
+  it.vertical_line(cx, cy + 9, 14, th.text);
+  // beams flicker on alternate 60 ms slices, like the original
+  if ((millis() / 60) % 2 == 0) {
+    int tx = cx + (int) (random_uint32() % 13) - 6;
+    int ty = cy + (int) (random_uint32() % 9) - 4;
+    const int by = VIEW_Y + VIEW_H - 1;
+    const int lx = VIEW_X + 36, rx = VIEW_X + VIEW_W - 37;
+    it.start_clipping(display::Rect(VIEW_X, VIEW_Y, VIEW_W, VIEW_H));
+    for (int k = 0; k < 6; k += 2) {
+      it.line(lx + k, by, tx, ty, th.accent);
+      it.line(rx - k, by, tx, ty, th.accent);
+    }
+    // sparks where the beams hit
+    for (int k = 0; k < 6; k++) {
+      int sx = tx + (int) (random_uint32() % 11) - 5, sy = ty + (int) (random_uint32() % 11) - 5;
+      it.filled_rectangle(sx, sy, 2, 2, Color(255, 255, 255));
+    }
+    it.end_clipping();
+  }
 }
 
 bool EliteClock::get_time_(ESPTime &t) {
@@ -615,6 +652,8 @@ void EliteClock::draw(display::Display &it) {
     this->draw_hyperspace_(it);
   else
     this->draw_ship_(it);
+  if (this->phase_ == PHASE_LASER)
+    this->draw_lasers_(it);
 
   // header: Commander name, or the classic title if blank
   char buf[48];
@@ -628,7 +667,7 @@ void EliteClock::draw(display::Display &it) {
   // ship name at the bottom of the space view
   if (this->phase_ == PHASE_HYPERSPACE)
     this->draw_text_centered_(it, SCREEN_W / 2, DIVIDER_Y - 13, "Hyperspace", 1, th.accent);
-  else if (this->phase_ == PHASE_SHOW)
+  else if (this->phase_ == PHASE_SHOW || this->phase_ == PHASE_LASER)
     this->draw_text_centered_(it, SCREEN_W / 2, DIVIDER_Y - 13, SHIPS[this->ship_].name, 1, th.accent);
 
   // flashing in-flight message

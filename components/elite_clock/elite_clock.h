@@ -22,7 +22,7 @@ struct Theme {
 };
 
 enum EffectMode : uint8_t { EFFECT_NONE = 0, EFFECT_HYPERSPACE = 1, EFFECT_EXPLOSION = 2, EFFECT_BOTH = 3 };
-enum Phase : uint8_t { PHASE_SHOW, PHASE_EXPLODE, PHASE_HYPERSPACE };
+enum Phase : uint8_t { PHASE_SHOW, PHASE_LASER, PHASE_EXPLODE, PHASE_HYPERSPACE };
 
 class EliteClock : public Component {
  public:
@@ -46,8 +46,9 @@ class EliteClock : public Component {
   void explode();  // blow up the current ship, then hyperspace to the next
   bool set_effect_by_name(const std::string &name);
   void set_hourly_explosion(bool v) { this->hourly_ = v; }
+  void set_lasers(bool v) { this->lasers_ = v; }
   int ship_index() const { return this->ship_; }
-  std::string ship_name() const { return SHIPS[this->phase_ == PHASE_SHOW ? this->ship_ : this->pending_].name; }
+  std::string ship_name() const { return SHIPS[this->phase_ == PHASE_HYPERSPACE ? this->pending_ : this->ship_].name; }
   static int ship_count() { return NUM_SHIPS; }
 
   // ---- settings (normally driven from Home Assistant entities) ----
@@ -79,6 +80,7 @@ class EliteClock : public Component {
   void update_phase_();
   void draw_explosion_(display::Display &it);
   void draw_hyperspace_(display::Display &it);
+  void draw_lasers_(display::Display &it);
   bool get_time_(ESPTime &t);
   void update_motion_(float dt);
   void draw_stars_(display::Display &it, float dt, float boost = 1.0f);
@@ -126,6 +128,7 @@ class EliteClock : public Component {
   // effects
   uint8_t effect_{EFFECT_BOTH};
   bool hourly_{true};
+  bool lasers_{true};
   int last_hour_{-1};
   Phase phase_{PHASE_SHOW};
   uint32_t phase_start_{0};
