@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build ${{ matrix.variant }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [st7789, ili9342, ili9341]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build firmware
+        uses: esphome/build-action@v8
+        with:
+          yaml-file: cyd-elite-${{ matrix.variant }}.yaml

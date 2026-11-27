@@ -1,0 +1,67 @@
+name: Publish firmware + web installer
+
+# Runs when you publish a GitHub Release (or manually).
+# Builds all three board variants and deploys the ESP Web Tools installer
+# and OTA update manifests to GitHub Pages.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build ${{ matrix.variant }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        variant: [st7789, ili9342, ili9341]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build firmware
+        id: esphome-build
+        uses: esphome/build-action@v8
+        with:
+          yaml-file: cyd-elite-${{ matrix.variant }}.yaml
+          complete-manifest: true
+      - name: Arrange output
+        run: |
+          mkdir -p output/firmware
+          mv "${{ steps.esphome-build.outputs.name }}" output/firmware/${{ matrix.variant }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ matrix.variant }}
+          path: output
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: firmware-*
+          merge-multiple: true
+          path: site
+      - name: Add installer page
+        run: |
+          cp -r static/* site/
+          mkdir -p site/images && cp docs/images/*.png site/images/
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,42 @@
+# =============================================================================
+#  CYD-Elite for the ESP32-2432S028 - original micro-USB, ILI9341 display
+# =============================================================================
+substitutions:
+  name: cyd-elite
+  friendly_name: CYD Elite
+  name_add_mac_suffix: "true"
+  project_version: "1.0.0"
+  variant: ili9341
+
+  # Display
+  display_model: ESP32-2432S028
+  display_rotation: "90"
+  invert_colors: "false"
+
+  # Touch calibration (XPT2046 raw values). If taps land in the wrong place,
+  # watch the log while touching the corners and adjust these.
+  touch_x_min: "280"
+  touch_x_max: "3860"
+  touch_y_min: "340"
+  touch_y_max: "3860"
+  touch_swap_xy: "false"
+  touch_mirror_x: "false"
+  touch_mirror_y: "false"
+
+  # Light sensor: voltage in a bright room / in the dark (see Ambient Light sensor)
+  ldr_bright_volts: "0.05"
+  ldr_dark_volts: "1.00"
+
+  # Used until Home Assistant supplies the time zone
+  fallback_timezone: "AEST-10"
+
+  import_url: github://DJL-F3D/CYD-Elite/cyd-elite-ili9341.yaml@main
+  update_manifest: https://djl-f3d.github.io/CYD-Elite/firmware/ili9341/manifest.json
+
+external_components:
+  - source: github://DJL-F3D/CYD-Elite@main
+    components: [elite_clock]
+    refresh: 1d
+
+packages:
+  base: !include common/base.yaml

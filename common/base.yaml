@@ -1,0 +1,489 @@
+# =============================================================================
+#  CYD-Elite - shared configuration
+#  Tumbling Elite ships + clock on an ESP32-2432S028 "Cheap Yellow Display"
+#  https://github.com/DJL-F3D/CYD-Elite
+#
+#  Don't edit this file for your own tweaks - override substitutions in the
+#  device file instead (see README).
+# =============================================================================
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  name_add_mac_suffix: ${name_add_mac_suffix}
+  min_version: 2026.4.0
+  project:
+    name: djl-f3d.cyd-elite
+    version: ${project_version}
+  on_boot:
+    priority: 600
+    then:
+      - light.turn_on:
+          id: backlight
+          brightness: 100%
+
+esp32:
+  board: esp32dev
+  flash_size: 4MB
+  framework:
+    type: esp-idf
+
+logger:
+  level: INFO
+
+# --- Home Assistant -----------------------------------------------------------
+api:
+  actions:
+    # Home Assistant action: esphome.<device>_show_message
+    - action: show_message
+      variables:
+        message: string
+        seconds: int
+      then:
+        - lambda: |-
+            id(elite).show_message(message, seconds > 0 ? seconds : 10);
+    - action: clear_message
+      then:
+        - lambda: id(elite).clear_message();
+
+ota:
+  - platform: esphome
+    id: ota_esphome
+  - platform: http_request
+    id: ota_http
+
+http_request:
+  verify_ssl: true
+
+update:
+  - platform: http_request
+    id: firmware_update
+    name: Firmware
+    source: ${update_manifest}
+    update_interval: 12h
+
+wifi:
+  ap:
+    ssid: "CYD-Elite Setup"
+  on_connect:
+    - lambda: 'id(elite).show_message("Docking computer on", 4);'
+
+captive_portal:
+
+improv_serial:
+
+web_server:
+  port: 80
+  version: 3
+
+dashboard_import:
+  package_import_url: ${import_url}
+  import_full_config: false
+
+# --- Time (from Home Assistant, including its time zone) ----------------------
+time:
+  - platform: homeassistant
+    id: ha_time
+  - platform: sntp
+    id: sntp_time
+    timezone: ${fallback_timezone}
+
+# --- Hardware -------------------------------------------------------------------
+spi:
+  - id: tft_spi
+    clk_pin: GPIO14
+    mosi_pin: GPIO13
+    miso_pin: GPIO12
+  - id: touch_spi
+    clk_pin: GPIO25
+    mosi_pin: GPIO32
+    miso_pin: GPIO39
+
+output:
+  - platform: ledc
+    pin: GPIO21
+    id: backlight_pwm
+    frequency: 5000Hz
+  - platform: ledc
+    id: led_r
+    pin: { number: GPIO4, inverted: true }
+  - platform: ledc
+    id: led_g
+    pin: { number: GPIO16, inverted: true }
+  - platform: ledc
+    id: led_b
+    pin: { number: GPIO17, inverted: true }
+
+light:
+  - platform: monochromatic
+    id: backlight
+    name: Backlight
+    icon: mdi:brightness-6
+    output: backlight_pwm
+    restore_mode: ALWAYS_ON
+    default_transition_length: 500ms
+  - platform: rgb
+    id: status_led
+    name: Status LED
+    red: led_r
+    green: led_g
+    blue: led_b
+    restore_mode: ALWAYS_OFF
+
+# --- The Elite clock ------------------------------------------------------------
+elite_clock:
+  id: elite
+  time_id: ha_time
+  fallback_time_id: sntp_time
+
+display:
+  - platform: mipi_spi
+    id: tft
+    model: ${display_model}
+    spi_id: tft_spi
+    rotation: ${display_rotation}
+    invert_colors: ${invert_colors}
+    color_depth: 8bit
+    buffer_size: 100%
+    auto_clear_enabled: false
+    update_interval: 50ms
+    lambda: |-
+      id(elite).draw(it);
+
+touchscreen:
+  - platform: xpt2046
+    id: touch
+    spi_id: touch_spi
+    display: tft
+    cs_pin: GPIO33
+    interrupt_pin: GPIO36
+    update_interval: 50ms
+    threshold: 400
+    calibration:
+      x_min: ${touch_x_min}
+      x_max: ${touch_x_max}
+      y_min: ${touch_y_min}
+      y_max: ${touch_y_max}
+    transform:
+      swap_xy: ${touch_swap_xy}
+      mirror_x: ${touch_mirror_x}
+      mirror_y: ${touch_mirror_y}
+    on_touch:
+      - lambda: |-
+          ESP_LOGD("touch", "touch at x=%d y=%d (raw %d,%d)", touch.x, touch.y, touch.x_raw, touch.y_raw);
+          id(elite).touch_start(touch.x, touch.y);
+    on_update:
+      - lambda: |-
+          if (!touches.empty()) id(elite).touch_move(touches[0].x, touches[0].y);
+    on_release:
+      - lambda: id(elite).touch_end();
+
+# --- Ambient light (LDR on GPIO34) -------------------------------------------------
+sensor:
+  - platform: adc
+    id: ldr
+    name: Ambient Light
+    pin: GPIO34
+    attenuation: 12db
+    update_interval: 2s
+    unit_of_measurement: V
+    entity_category: diagnostic
+    filters:
+      - sliding_window_moving_average:
+          window_size: 5
+          send_every: 1
+  - platform: wifi_signal
+    name: WiFi Signal
+    update_interval: 60s
+    entity_category: diagnostic
+  - platform: uptime
+    name: Uptime
+    entity_category: diagnostic
+
+interval:
+  - interval: 2s
+    then:
+      - if:
+          condition:
+            and:
+              - switch.is_on: auto_brightness
+              - light.is_on: backlight
+          then:
+            - lambda: |-
+                // The LDR reads a higher voltage in the dark
+                float v = id(ldr).state;
+                if (isnan(v)) return;
+                float bright_v = ${ldr_bright_volts}, dark_v = ${ldr_dark_volts};
+                float k = (v - bright_v) / (dark_v - bright_v);   // 0 = bright room, 1 = dark
+                if (k < 0) k = 0;
+                if (k > 1) k = 1;
+                float lo = id(min_brightness).state / 100.0f;
+                float hi = id(max_brightness).state / 100.0f;
+                float target = hi - k * (hi - lo);
+                auto cur = id(backlight).current_values.get_brightness();
+                if (fabsf(cur - target) > 0.03f) {
+                  auto call = id(backlight).turn_on();
+                  call.set_brightness(target);
+                  call.set_transition_length(1500);
+                  call.perform();
+                }
+
+# --- Settings exposed to Home Assistant ----------------------------------------------
+text:
+  - platform: template
+    id: commander_name
+    name: Commander Name
+    icon: mdi:account-tie-hat
+    mode: text
+    max_length: 28
+    optimistic: true
+    restore_value: true
+    initial_value: "Jameson"
+    on_value:
+      - lambda: id(elite).set_commander(x);
+  - platform: template
+    id: message_text
+    name: Message
+    icon: mdi:message-alert
+    mode: text
+    max_length: 38
+    optimistic: true
+    on_value:
+      - lambda: |-
+          if (x.empty()) id(elite).clear_message();
+          else id(elite).show_message(x, id(message_seconds).state);
+
+select:
+  - platform: template
+    id: ship_select
+    name: Ship
+    icon: mdi:rocket
+    update_interval: 1s
+    lambda: return id(elite).ship_name();
+    set_action:
+      - lambda: id(elite).set_ship_by_name(x);
+    options:
+      - "Cobra Mk III"
+      - "Python"
+      - "Viper"
+      - "Sidewinder"
+      - "Mamba"
+      - "Krait"
+      - "Adder"
+      - "Gecko"
+      - "Cobra Mk I"
+      - "Worm"
+      - "Asp Mk II"
+      - "Fer-de-Lance"
+      - "Moray"
+      - "Constrictor"
+      - "Cougar"
+      - "Boa"
+      - "Anaconda"
+      - "Shuttle"
+      - "Transporter"
+      - "Thargoid"
+      - "Thargon"
+      - "Coriolis Station"
+      - "Dodo Station"
+      - "Missile"
+      - "Escape Pod"
+      - "Cargo Canister"
+      - "Alloy Plate"
+      - "Asteroid"
+      - "Rock Hermit"
+      - "Boulder"
+      - "Splinter"
+      - "Elite Logo"
+  - platform: template
+    id: cycle_order
+    name: Cycle Order
+    icon: mdi:shuffle-variant
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    options: ["Sequential", "Random"]
+    initial_option: "Sequential"
+    on_value:
+      - lambda: id(elite).set_cycle_random(x == "Random");
+  - platform: template
+    id: colour_theme
+    name: Colour Theme
+    icon: mdi:palette
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    options: ["Classic", "Second Processor", "Amber", "Green Screen", "Dangerous"]
+    initial_option: "Second Processor"
+    on_value:
+      - lambda: id(elite).set_theme_by_name(x);
+  - platform: template
+    id: font_select
+    name: Font
+    icon: mdi:format-font
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    options: ["BBC Micro", "Executive"]
+    initial_option: "BBC Micro"
+    on_value:
+      - lambda: id(elite).set_exec_font(x == "Executive");
+
+number:
+  - platform: template
+    id: cycle_minutes
+    name: Cycle Interval
+    icon: mdi:timer-sync
+    entity_category: config
+    unit_of_measurement: min
+    min_value: 1
+    max_value: 120
+    step: 1
+    optimistic: true
+    restore_value: true
+    initial_value: 5
+    on_value:
+      - lambda: id(elite).set_cycle_minutes(x);
+  - platform: template
+    id: rotation_speed
+    name: Rotation Speed
+    icon: mdi:rotate-3d-variant
+    entity_category: config
+    min_value: 0
+    max_value: 10
+    step: 1
+    optimistic: true
+    restore_value: true
+    initial_value: 5
+    on_value:
+      - lambda: id(elite).set_rotation_speed(x);
+  - platform: template
+    id: message_seconds
+    name: Message Duration
+    icon: mdi:timer-outline
+    entity_category: config
+    unit_of_measurement: s
+    min_value: 2
+    max_value: 120
+    step: 1
+    optimistic: true
+    restore_value: true
+    initial_value: 10
+  - platform: template
+    id: min_brightness
+    name: Auto Brightness Min
+    icon: mdi:brightness-4
+    entity_category: config
+    unit_of_measurement: "%"
+    min_value: 1
+    max_value: 100
+    step: 1
+    optimistic: true
+    restore_value: true
+    initial_value: 10
+  - platform: template
+    id: max_brightness
+    name: Auto Brightness Max
+    icon: mdi:brightness-7
+    entity_category: config
+    unit_of_measurement: "%"
+    min_value: 1
+    max_value: 100
+    step: 1
+    optimistic: true
+    restore_value: true
+    initial_value: 100
+
+switch:
+  - platform: template
+    id: auto_cycle
+    name: Auto Cycle Ships
+    icon: mdi:autorenew
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    turn_on_action:
+      - lambda: id(elite).set_auto_cycle(true);
+    turn_off_action:
+      - lambda: id(elite).set_auto_cycle(false);
+  - platform: template
+    id: clock_24h
+    name: 24 Hour Clock
+    icon: mdi:hours-24
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    turn_on_action:
+      - lambda: id(elite).set_use_24h(true);
+    turn_off_action:
+      - lambda: id(elite).set_use_24h(false);
+  - platform: template
+    id: hidden_lines
+    name: Hidden Line Removal
+    icon: mdi:cube-outline
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    turn_on_action:
+      - lambda: id(elite).set_hidden_lines(true);
+    turn_off_action:
+      - lambda: id(elite).set_hidden_lines(false);
+  - platform: template
+    id: starfield
+    name: Starfield
+    icon: mdi:star-shooting
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    turn_on_action:
+      - lambda: id(elite).set_starfield(true);
+    turn_off_action:
+      - lambda: id(elite).set_starfield(false);
+  - platform: template
+    id: ship_info
+    name: Show Ship Info
+    icon: mdi:information-outline
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    turn_on_action:
+      - lambda: id(elite).set_show_info(true);
+    turn_off_action:
+      - lambda: id(elite).set_show_info(false);
+  - platform: template
+    id: show_date
+    name: Show Date
+    icon: mdi:calendar
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    turn_on_action:
+      - lambda: id(elite).set_show_date(true);
+    turn_off_action:
+      - lambda: id(elite).set_show_date(false);
+  - platform: template
+    id: auto_brightness
+    name: Auto Brightness
+    icon: mdi:brightness-auto
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+
+button:
+  - platform: template
+    name: Next Ship
+    icon: mdi:skip-next
+    on_press:
+      - lambda: id(elite).next_ship();
+  - platform: template
+    name: Previous Ship
+    icon: mdi:skip-previous
+    on_press:
+      - lambda: id(elite).prev_ship();
+  - platform: template
+    name: Random Ship
+    icon: mdi:dice-multiple
+    on_press:
+      - lambda: id(elite).random_ship();
+  - platform: restart
+    name: Restart
+    entity_category: config

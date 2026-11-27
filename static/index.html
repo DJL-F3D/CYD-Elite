@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CYD-Elite Installer</title>
+  <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+  <style>
+    :root { color-scheme: dark; }
+    body { background: #000; color: #ff0; font-family: "Courier New", monospace; max-width: 760px; margin: 0 auto; padding: 24px; line-height: 1.5; }
+    h1 { text-align: center; letter-spacing: 0.4em; color: #ff0; margin-bottom: 0; }
+    .sub { text-align: center; color: #0ff; margin-top: 4px; }
+    img.shot { display: block; margin: 24px auto; max-width: 100%; image-rendering: pixelated; border: 1px solid #ff0; }
+    .card { border: 1px solid #ff0; padding: 16px 20px; margin: 18px 0; }
+    .card h2 { color: #f33; margin: 0 0 6px; font-size: 1.1em; }
+    .card p { color: #ddd; margin: 4px 0 12px; }
+    esp-web-install-button button[slot="activate"] { background: #000; color: #0ff; border: 2px solid #0ff; padding: 10px 18px; font: inherit; cursor: pointer; }
+    esp-web-install-button button[slot="activate"]:hover { background: #0ff; color: #000; }
+    a { color: #0ff; }
+    .small { color: #aaa; font-size: 0.85em; }
+  </style>
+</head>
+<body>
+  <h1>---- E L I T E ----</h1>
+  <p class="sub">A tumbling-ship clock for the ESP32-2432S028 "Cheap Yellow Display"</p>
+  <img class="shot" src="images/screenshot.png" alt="CYD-Elite screenshot">
+
+  <p>Plug your CYD in with a USB <b>data</b> cable, pick your board below and click <b>Connect</b>.
+     Works in Chrome or Edge on a computer. After flashing, enter your 2.4&nbsp;GHz Wi-Fi details,
+     then Home Assistant will discover the clock automatically.</p>
+
+  <div class="card">
+    <h2>Dual USB (USB-C + micro-USB) &mdash; ST7789V</h2>
+    <p>The most common dual-USB board. If the colours look like a photo negative, try the ILI9342 build.</p>
+    <esp-web-install-button manifest="firmware/st7789/manifest.json">
+      <button slot="activate">Connect &amp; Install</button>
+    </esp-web-install-button>
+  </div>
+
+  <div class="card">
+    <h2>Dual USB (USB-C + micro-USB) &mdash; ILI9342</h2>
+    <p>Some dual-USB boards ship with an ILI9342 panel instead.</p>
+    <esp-web-install-button manifest="firmware/ili9342/manifest.json">
+      <button slot="activate">Connect &amp; Install</button>
+    </esp-web-install-button>
+  </div>
+
+  <div class="card">
+    <h2>Original (micro-USB only) &mdash; ILI9341</h2>
+    <p>The first-generation CYD with a single micro-USB socket.</p>
+    <esp-web-install-button manifest="firmware/ili9341/manifest.json">
+      <button slot="activate">Connect &amp; Install</button>
+    </esp-web-install-button>
+  </div>
+
+  <p class="small">Source and instructions: <a href="https://github.com/DJL-F3D/CYD-Elite">github.com/DJL-F3D/CYD-Elite</a><br>
+     Ship blueprints from 6502 Second Processor Elite via <a href="https://elite.bbcelite.com">bbcelite.com</a>.
+     Elite &copy; Ian Bell &amp; David Braben / Acornsoft 1985. Non-commercial fan project.</p>
+</body>
+</html>
